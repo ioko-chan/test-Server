@@ -6,13 +6,73 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <thread>
+#include <string>
+
+int clientConnect(SOCKET &listenerSocket, SOCKET &clientSocket, ADDRINFO *addrResult){
+    clientSocket = accept(listenerSocket,NULL,NULL);
+    if(clientSocket == INVALID_SOCKET){
+        return 1;
+    }
+    return 0;
+}
+
+int clientCommunicate(SOCKET &clientSocket,const char *sendBuffer, char recvBuffer[512], int &result, ADDRINFO *addrResult){
+
+    do {
+        ZeroMemory(recvBuffer, 512);
+        result = recv(clientSocket, recvBuffer, 512 , 0);
+        if(result > 0){
+            auto id =std::this_thread::get_id();
+            std::cout << "Client("<< id <<"): " << recvBuffer << std::endl;
+            std::string quit = "quit";
+            if(recvBuffer == quit.data()){
+                result = 0;
+                continue;
+            }
+            std::cout<< "Me: ";
+            std::string sendStr;
+            _flushall();
+            getline(std::cin, sendStr);
+            result = send(clientSocket ,sendStr.data() ,(int)strlen(sendBuffer), 0);
+            if(result == SOCKET_ERROR){
+                std::cout << " Failed to send data back" << std::endl;
+                closesocket(clientSocket);
+                clientSocket = INVALID_SOCKET;
+                freeaddrinfo(addrResult);
+                WSACleanup();
+            }
+        }
+        else if(result == 0 ){
+            std::cout << "Connection closing..." << std::endl;
+        }
+        else{
+            std::cout << "recv failed with error " <<std::endl;
+            closesocket(clientSocket);
+            clientSocket = INVALID_SOCKET;
+            freeaddrinfo(addrResult);
+            WSACleanup();
+            return 1;
+        }
+    } while (result > 0);
+
+    result = shutdown(clientSocket, SD_SEND);
+    if(result == SOCKET_ERROR){
+        std::cout << "shutdown client socket failed" <<std::endl;
+    }
+
+    closesocket(clientSocket);
+    clientSocket = INVALID_SOCKET;
+    freeaddrinfo(addrResult);
+    WSACleanup();
+    return 0;
+}
 
 int main() {
 
     WSADATA wsaData;
     ADDRINFO hints;
     ADDRINFO *addrResult = NULL;
-    SOCKET clientSocket = INVALID_SOCKET;
     SOCKET listenerSocket = INVALID_SOCKET;
 
     const char* sendBuffer = "Hello from server!";
@@ -32,7 +92,7 @@ int main() {
 
     result = getaddrinfo(NULL, "666", &hints , &addrResult);
     if(result!=0){
-        std::cout << "getaddrinfo failed, result = " << result << std::endl;
+        std::cout << "getAddrinfo failed, result = " << result << std::endl;
         WSACleanup();
         return 1;
     }
@@ -65,8 +125,10 @@ int main() {
         return 1;
     }
 
-    clientSocket = accept(listenerSocket,NULL,NULL);
-    if(clientSocket == INVALID_SOCKET){
+
+    SOCKET clientSocket = INVALID_SOCKET;
+    if(clientConnect(listenerSocket, clientSocket, addrResult)==1){
+
         std::cout << "Accepting socket failed" << std::endl;
         closesocket(listenerSocket);
         listenerSocket = INVALID_SOCKET;
@@ -74,45 +136,10 @@ int main() {
         WSACleanup();
         return 1;
     }
-
     closesocket(listenerSocket);
-
-    do {
-        ZeroMemory(recvBuffer, 512);
-        result = recv(clientSocket, recvBuffer, 512 , 0);
-        if(result > 0){
-            std::cout << "Received: " << result << std::endl;
-            std::cout << "Received data: " << recvBuffer << std::endl;
-            result = send(clientSocket ,sendBuffer ,(int)strlen(sendBuffer), 0);
-            if(result == SOCKET_ERROR){
-                std::cout << " Failed to send data back" << std::endl;
-                closesocket(clientSocket);
-                clientSocket = INVALID_SOCKET;
-                freeaddrinfo(addrResult);
-                WSACleanup();
-            }
-        }
-        else if(result == 0 ){
-            std::cout << "Connection closing..." << std::endl;
-        }
-        else{
-            std::cout << "recv failed with error " <<std::endl;
-            closesocket(clientSocket);
-            clientSocket = INVALID_SOCKET;
-            freeaddrinfo(addrResult);
-            WSACleanup();
-            return 1;
-        }
-    } while (result > 0);
-
-    result = shutdown(clientSocket, SD_SEND);
-    if(result == SOCKET_ERROR){
-        std::cout << "shutdown client socket failed" <<std::endl;
-    }
-
-    closesocket(clientSocket);
-    clientSocket = INVALID_SOCKET;
-    freeaddrinfo(addrResult);
-    WSACleanup();
+    std::thread threadForClient(clientCommunicate ,
+                                std::ref(clientSocket),  std::ref( sendBuffer),
+                                std::ref(recvBuffer),  std::ref(result),  std::ref(addrResult));
+    threadForClient.join();
     return 0;
 }
